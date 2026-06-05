@@ -47,6 +47,9 @@
   #listItems div{padding:5px 0;border-bottom:1px solid #333;font-size:12px;
     display:flex;justify-content:space-between;gap:8px}
   #listItems a{color:#f88;text-decoration:none}
+  #toggles{font-size:12px;margin:4px 0}
+  #toggles label{display:inline-block;margin-right:8px;white-space:nowrap}
+  .cf{font-size:22px;color:#ffd400;text-shadow:0 0 3px #000,0 0 3px #000;text-align:center;line-height:24px}
 </style>
 </head>
 <body>
@@ -56,7 +59,14 @@
   <b>AlluviAI</b> — Bendigo
   <select id="areaSel"></select>
   <label>Overlay <input id="op" type="range" min="0" max="100" value="55"></label>
-  <label style="display:block;font-size:12px"><input type="checkbox" id="shaftChk"> show old shafts</label>
+  <div id="toggles">
+    <label><input type="checkbox" id="t_overlay" checked> heatmap</label>
+    <label><input type="checkbox" id="t_spots" checked> top spots</label>
+    <label><input type="checkbox" id="t_shafts"> old shafts</label><br>
+    <label><input type="checkbox" id="t_confirmed" checked> ★ finds</label>
+    <label><input type="checkbox" id="t_myfinds" checked> my finds</label>
+    <label><input type="checkbox" id="t_track" checked> track</label>
+  </div>
   <div id="nearest"><span id="ntext">Nearest spot: —</span> <span id="arrow"></span></div>
   <div id="status">Locating…</div>
   <button class="btn" style="background:#1f7a44" onclick="saveArea()">⤓ Save offline</button>
@@ -114,7 +124,16 @@ const findLayer = L.layerGroup().addTo(map);
 let track=JSON.parse(localStorage.getItem('alluviai_track')||'[]');
 const trackLine=L.polyline(track,{color:'#00e5ff',weight:3,opacity:.7});
 const trackLayer=L.layerGroup([trackLine]).addTo(map);
-L.control.layers({'Satellite':sat,'OpenStreetMap':osm},{'My finds':findLayer,'My track':trackLayer}).addTo(map);
+L.control.layers({'Satellite':sat,'OpenStreetMap':osm}).addTo(map);
+
+// confirmed ground-truth finds (gold stars)
+const CONFIRMED = [{"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428}, {"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794}];
+const confirmedLayer = L.layerGroup().addTo(map);
+CONFIRMED.forEach(f=>{
+  const icon=L.divIcon({className:'cf',html:'★',iconSize:[24,24],iconAnchor:[12,12]});
+  L.marker([f.lat,f.lon],{icon,zIndexOffset:1000}).addTo(confirmedLayer)
+   .bindPopup('<b>★ Confirmed gold</b><br>'+f.name+'<br>'+f.lat.toFixed(5)+', '+f.lon.toFixed(5));
+});
 
 // ---- per-area layers ----
 const areaObjs={}; let ALL_PEAKS=[];
@@ -135,19 +154,23 @@ AREAS.forEach(a=>{
   areaObjs[a.slug]={overlay,wp,sh,a};
 });
 let currentSlug=AREAS[0].slug;
-function showArea(slug,fly){
-  for(const k in areaObjs){const o=areaObjs[k];
-    if(k===slug){o.overlay.addTo(map);o.wp.addTo(map);
-      if(document.getElementById('shaftChk').checked)o.sh.addTo(map);else map.removeLayer(o.sh);}
-    else{map.removeLayer(o.overlay);map.removeLayer(o.wp);map.removeLayer(o.sh);}}
-  currentSlug=slug;
-  if(fly){const a=areaObjs[slug].a;map.setView([a.clat,a.clon],16);}
+function setLayer(layer,on){ if(on)layer.addTo(map); else map.removeLayer(layer); }
+function chk(id){ return document.getElementById(id).checked; }
+function applyAreaLayers(){
+  const ov=chk('t_overlay'), sp=chk('t_spots'), sh=chk('t_shafts');
+  for(const k in areaObjs){const o=areaObjs[k], active=(k===currentSlug);
+    setLayer(o.overlay, active&&ov); setLayer(o.wp, active&&sp); setLayer(o.sh, active&&sh);}
 }
+function showArea(slug,fly){ currentSlug=slug; applyAreaLayers();
+  if(fly){const a=areaObjs[slug].a;map.setView([a.clat,a.clon],16);} }
 const sel=document.getElementById('areaSel');
 AREAS.forEach(a=>{const o=document.createElement('option');o.value=a.slug;o.textContent=a.name;sel.appendChild(o);});
 sel.onchange=()=>showArea(sel.value,true);
 document.getElementById('op').oninput=e=>areaObjs[currentSlug].overlay.setOpacity(e.target.value/100);
-document.getElementById('shaftChk').onchange=()=>showArea(currentSlug,false);
+['t_overlay','t_spots','t_shafts'].forEach(id=>document.getElementById(id).onchange=applyAreaLayers);
+document.getElementById('t_confirmed').onchange=e=>setLayer(confirmedLayer,e.target.checked);
+document.getElementById('t_myfinds').onchange=e=>setLayer(findLayer,e.target.checked);
+document.getElementById('t_track').onchange=e=>setLayer(trackLayer,e.target.checked);
 showArea(currentSlug,false);
 
 // ---- geometry helpers ----
