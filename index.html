@@ -50,6 +50,10 @@
   #toggles{font-size:12px;margin:4px 0}
   #toggles label{display:inline-block;margin-right:8px;white-space:nowrap}
   .cf{font-size:22px;color:#ffd400;text-shadow:0 0 3px #000,0 0 3px #000;text-align:center;line-height:24px}
+  #flowdirs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:4px 0 8px}
+  #flowdirs button{padding:7px 0;border:1px solid #444;border-radius:7px;background:#26262c;
+    color:#fff;font-size:13px;cursor:pointer}
+  #flowdirs button.sel{background:#2d6cdf;border-color:#2d6cdf;font-weight:700}
 </style>
 </head>
 <body>
@@ -99,6 +103,17 @@
   <div class="card">
     <b>Log a find</b>
     <div id="logwhere" class="muted"></div>
+    <div class="muted">Flow direction — tap which way the water runs (downstream):</div>
+    <div id="flowdirs">
+      <button type="button" data-az="0">N</button>
+      <button type="button" data-az="45">NE</button>
+      <button type="button" data-az="90">E</button>
+      <button type="button" data-az="135">SE</button>
+      <button type="button" data-az="180">S</button>
+      <button type="button" data-az="225">SW</button>
+      <button type="button" data-az="270">W</button>
+      <button type="button" data-az="315">NW</button>
+    </div>
     <div class="outs">
       <button onclick="saveLog('None')"    style="background:#777">Nothing</button>
       <button onclick="saveLog('Colours')" style="background:#2ecc40">Colours</button>
@@ -132,7 +147,7 @@ const trackLayer=L.layerGroup([trackLine]).addTo(map);
 L.control.layers({'Satellite':sat,'OpenStreetMap':osm}).addTo(map);
 
 // ground-truth points: finds = gold stars, controls = grey rings
-const CONFIRMED = [{"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428, "kind": "find", "area": "castlemaine", "source": "5m"}, {"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794, "kind": "find", "area": "fryerstown", "source": "5m"}];
+const CONFIRMED = [{"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794, "kind": "find", "area": "fryerstown", "source": "5m"}, {"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428, "kind": "find", "area": "castlemaine", "source": "5m", "exact_pct": 62, "near15_pct": 100}];
 const confirmedLayer = L.layerGroup().addTo(map);
 CONFIRMED.forEach(f=>{
   const ctrl = f.kind==='control';
@@ -278,7 +293,7 @@ function outColor(o){return o==='Nothing'||o==='None'?'#888':o==='Nugget'?'#ffd7
 function addFindMarker(f){
   const m=L.circleMarker([f.lat,f.lon],{radius:6,color:'#fff',weight:1,fillColor:outColor(f.outcome),fillOpacity:1})
    .addTo(findLayer).bindPopup('<b>'+f.outcome+'</b><br>'+new Date(f.ts).toLocaleString()
-     +(f.pans?'<br>'+f.pans+' pans':'')+(f.notes?'<br>'+f.notes:''));
+     +(f.flow_dir?'<br>flow: '+f.flow_dir:'')+(f.pans?'<br>'+f.pans+' pans':'')+(f.notes?'<br>'+f.notes:''));
   findMarkers[f.ts]=m;}
 finds.forEach(addFindMarker);
 function refreshCount(){document.getElementById('cnt').textContent=finds.length;}
@@ -292,11 +307,20 @@ function renderList(){const el=document.getElementById('listItems');
 function toggleList(){const p=document.getElementById('listPanel');
   p.style.display=(p.style.display==='block')?'none':'block'; if(p.style.display==='block')renderList();}
 
-let logPos=null;
+let logPos=null, flowAz=null, flowLabel='';
+document.getElementById('flowdirs').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  flowAz=+b.dataset.az; flowLabel=b.textContent;
+  document.querySelectorAll('#flowdirs button').forEach(x=>x.classList.toggle('sel',x===b));});
 function openLog(){logPos = me ? me.getLatLng() : map.getCenter();
   document.getElementById('logwhere').textContent=(me?'at your GPS position':'at map centre (no GPS)')
     +' · '+logPos.lat.toFixed(5)+', '+logPos.lng.toFixed(5);
   document.getElementById('pans').value=''; document.getElementById('notes').value='';
+  flowAz=null; flowLabel='';
+  document.querySelectorAll('#flowdirs button').forEach(x=>x.classList.remove('sel'));
+  if(heading!=null){const az=(Math.round(heading/45)*45)%360;
+    const b=document.querySelector('#flowdirs button[data-az="'+az+'"]');
+    if(b){b.classList.add('sel'); flowAz=az; flowLabel=b.textContent;}}
   document.getElementById('modal').style.display='block';}
 function closeLog(){document.getElementById('modal').style.display='none';}
 function saveLog(outcome){if(!logPos)return;const r=nearestPeak(logPos.lat,logPos.lng);
@@ -304,12 +328,13 @@ function saveLog(outcome){if(!logPos)return;const r=nearestPeak(logPos.lat,logPo
     outcome:outcome,pans:document.getElementById('pans').value,
     notes:(document.getElementById('notes').value||'').replace(/[\r\n,]/g,' '),
     near_spot:r.p?r.p.n:'',near_area:r.p?r.p.area:'',near_m:r.p?Math.round(r.d):'',
-    near_top_pct:r.p?Math.max(1,100-r.p.pct):''};
+    near_top_pct:r.p?Math.max(1,100-r.p.pct):'',
+    flow_az:flowAz==null?'':flowAz, flow_dir:flowLabel};
   finds.push(f); localStorage.setItem(LS,JSON.stringify(finds)); addFindMarker(f); refreshCount(); closeLog();}
 function exportCSV(){if(!finds.length){alert('No finds logged yet.');return;}
-  const cols=['timestamp_iso','lat','lon','gps_acc_m','outcome','pans','near_spot','near_area','near_m','near_top_pct','notes'];
+  const cols=['timestamp_iso','lat','lon','gps_acc_m','outcome','pans','flow_az','flow_dir','near_spot','near_area','near_m','near_top_pct','notes'];
   const rows=finds.map(f=>[new Date(f.ts).toISOString(),f.lat,f.lon,f.acc,f.outcome,f.pans,
-    f.near_spot,f.near_area||'',f.near_m,f.near_top_pct,'"'+(f.notes||'')+'"'].join(','));
+    f.flow_az==null?'':f.flow_az,f.flow_dir||'',f.near_spot,f.near_area||'',f.near_m,f.near_top_pct,'"'+(f.notes||'')+'"'].join(','));
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([cols.join(',')+'\n'+rows.join('\n')],{type:'text/csv'}));
   a.download='alluviai_finds.csv'; a.click();}
