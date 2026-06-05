@@ -69,6 +69,11 @@
   </div>
   <div id="nearest"><span id="ntext">Nearest spot: —</span> <span id="arrow"></span></div>
   <div id="status">Locating…</div>
+  <div id="coords" style="font-size:11px;opacity:.85;margin-top:3px">My position: —</div>
+  <div style="margin-top:4px">
+    <input id="gotoIn" placeholder="lat, lon" style="width:115px;padding:4px;border-radius:6px;border:1px solid #444;background:#26262c;color:#fff;font-size:12px">
+    <button class="btn" style="padding:5px 9px" onclick="gotoCoord()">Go to</button>
+  </div>
   <button class="btn" style="background:#1f7a44" onclick="saveArea()">⤓ Save offline</button>
   <button id="compassBtn" class="btn" style="background:#555" onclick="enableCompass()">🧭 Compass</button>
   <div id="offline"></div>
@@ -126,13 +131,22 @@ const trackLine=L.polyline(track,{color:'#00e5ff',weight:3,opacity:.7});
 const trackLayer=L.layerGroup([trackLine]).addTo(map);
 L.control.layers({'Satellite':sat,'OpenStreetMap':osm}).addTo(map);
 
-// confirmed ground-truth finds (gold stars)
-const CONFIRMED = [{"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428}, {"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794}];
+// ground-truth points: finds = gold stars, controls = grey rings
+const CONFIRMED = [{"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428, "kind": "find", "area": "castlemaine", "source": "5m"}, {"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794, "kind": "find", "area": "fryerstown", "source": "5m"}];
 const confirmedLayer = L.layerGroup().addTo(map);
 CONFIRMED.forEach(f=>{
-  const icon=L.divIcon({className:'cf',html:'★',iconSize:[24,24],iconAnchor:[12,12]});
-  L.marker([f.lat,f.lon],{icon,zIndexOffset:1000}).addTo(confirmedLayer)
-   .bindPopup('<b>★ Confirmed gold</b><br>'+f.name+'<br>'+f.lat.toFixed(5)+', '+f.lon.toFixed(5));
+  const ctrl = f.kind==='control';
+  if(ctrl){
+    L.circleMarker([f.lat,f.lon],{radius:6,color:'#bbb',weight:2,fillColor:'#444',fillOpacity:.6})
+     .addTo(confirmedLayer).bindPopup('<b>Control (no gold)</b><br>'+f.name
+       +(f.exact_pct!=null?'<br>scored '+f.exact_pct+'th pctile':''));
+  } else {
+    const icon=L.divIcon({className:'cf',html:'★',iconSize:[24,24],iconAnchor:[12,12]});
+    L.marker([f.lat,f.lon],{icon,zIndexOffset:1000}).addTo(confirmedLayer)
+     .bindPopup('<b>★ Confirmed gold</b><br>'+f.name
+       +(f.exact_pct!=null?'<br>scored '+f.exact_pct+'th pctile':'')
+       +'<br>'+f.lat.toFixed(5)+', '+f.lon.toFixed(5));
+  }
 });
 
 // ---- per-area layers ----
@@ -216,10 +230,24 @@ function onPos(p){const ll=[p.coords.latitude,p.coords.longitude]; accM=p.coords
     accCircle=L.circle(ll,{radius:accM,color:'#1e90ff',weight:1,fillOpacity:.08}).addTo(map);}
   else{me.setLatLng(ll);accCircle.setLatLng(ll).setRadius(accM);}
   status.textContent='GPS ±'+Math.round(accM)+' m';
+  document.getElementById('coords').textContent=
+    'My position: '+p.coords.latitude.toFixed(5)+', '+p.coords.longitude.toFixed(5);
   pushTrack(p.coords.latitude,p.coords.longitude);
   updateNearest(p.coords.latitude,p.coords.longitude);
   if(first){map.setView(ll,17);first=false;}}
 function onErr(e){status.textContent='GPS unavailable ('+e.message+')';}
+// go to a typed coordinate (drops/moves a draggable pin)
+let gotoMarker=null;
+function gotoCoord(){
+  const v=(document.getElementById('gotoIn').value||'').trim();
+  const m=v.match(/(-?\d+(?:\.\d+)?)[ ,]+(-?\d+(?:\.\d+)?)/);
+  if(!m){alert('Enter coordinates as "lat, lon"');return;}
+  const lat=parseFloat(m[1]), lon=parseFloat(m[2]);
+  if(Math.abs(lat)>90||Math.abs(lon)>180){alert('Out of range');return;}
+  if(!gotoMarker){gotoMarker=L.marker([lat,lon],{draggable:true}).addTo(map);}
+  else gotoMarker.setLatLng([lat,lon]);
+  gotoMarker.bindPopup('Pin: '+lat.toFixed(5)+', '+lon.toFixed(5)).openPopup();
+  map.setView([lat,lon],17);}
 if('geolocation' in navigator){navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:2000,timeout:10000});}
 else {status.textContent='No geolocation support';}
 document.getElementById('gps').onclick=()=>{if(me)map.setView(me.getLatLng(),18);};
