@@ -147,7 +147,7 @@ const trackLayer=L.layerGroup([trackLine]).addTo(map);
 L.control.layers({'Satellite':sat,'OpenStreetMap':osm}).addTo(map);
 
 // ground-truth points: finds = gold stars, controls = grey rings
-const CONFIRMED = [{"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794, "kind": "find", "area": "fryerstown", "source": "5m"}, {"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428, "kind": "find", "area": "castlemaine", "source": "5m", "exact_pct": 62, "near15_pct": 100}];
+const CONFIRMED = [{"name": "Fryerstown find", "lat": -37.13948574222607, "lon": 144.22577931769794, "kind": "find", "area": "fryerstown", "source": "5m"}, {"name": "Castlemaine find", "lat": -37.1124165816347, "lon": 144.25390613224428, "kind": "find", "area": "castlemaine", "source": "5m", "exact_pct": 62, "near15_pct": 100}, {"name": "Tipperary find (IMG_6158)", "lat": -36.8007, "lon": 144.2561, "kind": "find", "area": "tipperary_gully", "source": "1m", "caveat": "adjacent historic open-cut mine corrupts the catchment flow model here; catchment score NOT reliable. Good target for the local photo/depth model instead. Photo: IMG_6158 (facing upstream)."}];
 const confirmedLayer = L.layerGroup().addTo(map);
 CONFIRMED.forEach(f=>{
   const ctrl = f.kind==='control';
