@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>AlluviAI — Tipperary Gully prospectivity</title>
+<meta name="theme-color" content="#121621"/>
+<title>AlluviAI — Tipperary Gully</title>
+<link rel="manifest" href="manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="icon-192.png"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -20,7 +23,7 @@
     background:linear-gradient(90deg,#1a80e6,#ffd900,#ff7300,#d80000)}
   .row{display:flex;justify-content:space-between;font-size:11px;opacity:.85}
   #op{width:120px;vertical-align:middle}
-  #status,#nearest{font-size:12px;margin-top:4px}
+  #status,#nearest,#offline{font-size:12px;margin-top:4px}
   .btn{display:inline-block;margin:4px 2px 0;padding:6px 10px;border:0;border-radius:8px;
     background:#2d6cdf;color:#fff;font-size:13px;cursor:pointer}
   .wp .pin{width:24px;height:24px;border-radius:50%;background:#d80000;color:#fff;
@@ -48,6 +51,8 @@
   <label>Overlay <input id="op" type="range" min="0" max="100" value="55"></label>
   <div id="nearest">Nearest spot: —</div>
   <div id="status">Locating…</div>
+  <button class="btn" style="background:#1f7a44" onclick="saveArea()">⤓ Save area offline</button>
+  <div id="offline"></div>
 </div>
 
 <div id="gps" class="panel">📍<br>Recenter</div>
@@ -82,13 +87,16 @@
 </div>
 
 <script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+
 const S=-36.816428, W=144.253349, N=-36.800859, E=144.265092;
 const PEAKS = [{"n": 1, "lat": -36.802706, "lon": 144.258777, "pct": 100}, {"n": 2, "lat": -36.801195, "lon": 144.256926, "pct": 100}, {"n": 3, "lat": -36.801895, "lon": 144.257607, "pct": 100}, {"n": 4, "lat": -36.810137, "lon": 144.254691, "pct": 100}, {"n": 5, "lat": -36.802416, "lon": 144.258317, "pct": 100}, {"n": 6, "lat": -36.803853, "lon": 144.260059, "pct": 100}, {"n": 7, "lat": -36.804401, "lon": 144.254884, "pct": 100}, {"n": 8, "lat": -36.802316, "lon": 144.257491, "pct": 100}, {"n": 9, "lat": -36.801463, "lon": 144.255673, "pct": 100}, {"n": 10, "lat": -36.802797, "lon": 144.257261, "pct": 100}, {"n": 11, "lat": -36.80136, "lon": 144.257447, "pct": 100}, {"n": 12, "lat": -36.803113, "lon": 144.259615, "pct": 100}, {"n": 13, "lat": -36.810772, "lon": 144.256461, "pct": 100}, {"n": 14, "lat": -36.810534, "lon": 144.255517, "pct": 100}, {"n": 15, "lat": -36.803122, "lon": 144.258841, "pct": 100}];
+const TILEURL='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const map = L.map('map', {zoomControl:true}).setView([-36.808643,144.259220], 16);
 
-const sat = L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  {maxZoom:21, attribution:'Esri World Imagery'}).addTo(map);
+const sat = L.tileLayer(TILEURL, {maxZoom:21, attribution:'Esri World Imagery'}).addTo(map);
 const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'© OpenStreetMap'});
 
@@ -124,7 +132,6 @@ function updateNearest(lat,lon){if(!PEAKS.length)return;const r=nearestPeak(lat,
   document.getElementById('nearest').innerHTML='Nearest spot: <b>#'+r.p.n+'</b> · '
     +Math.round(r.d)+' m '+bearing(lat,lon,r.p.lat,r.p.lon);}
 
-// ---- live GPS ----
 let me=null, accCircle=null, accM=0, first=true;
 const status=document.getElementById('status');
 function onPos(p){
@@ -142,7 +149,32 @@ if('geolocation' in navigator){
 } else {status.textContent='No geolocation support';}
 document.getElementById('gps').onclick=()=>{if(me)map.setView(me.getLatLng(),18);};
 
-// ---- field log (localStorage) ----
+// ---- save area offline ----
+function lon2x(lon,z){return Math.floor((lon+180)/360*Math.pow(2,z));}
+function lat2y(lat,z){const r=lat*Math.PI/180;
+  return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z));}
+async function saveArea(){
+  const off=document.getElementById('offline');
+  if(!('caches' in window)){off.textContent='offline cache unsupported';return;}
+  const cache=await caches.open('alluviai-tiles-v1');
+  const pad=0.002;  // ~200m beyond the model area so you can approach it
+  const s=S-pad,n=N+pad,w=W-pad,e=E+pad;
+  const urls=[];
+  for(let z=13;z<=18;z++){
+    const x0=lon2x(w,z),x1=lon2x(e,z),y0=lat2y(n,z),y1=lat2y(s,z);
+    for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)
+      urls.push(TILEURL.replace('{z}',z).replace('{x}',x).replace('{y}',y));
+  }
+  off.textContent='Downloading 0/'+urls.length+' tiles…';
+  let done=0;
+  for(const u of urls){
+    try{const r=await fetch(u,{mode:'no-cors'});await cache.put(u,r);}catch(err){}
+    done++; if(done%15===0||done===urls.length) off.textContent='Downloading '+done+'/'+urls.length+' tiles…';
+  }
+  off.innerHTML='<b>Saved '+urls.length+' tiles.</b> Works offline now.';
+}
+
+// ---- field log ----
 const LS='alluviai_finds';
 let finds=JSON.parse(localStorage.getItem(LS)||'[]');
 function outColor(o){return o==='Nothing'||o==='None'?'#888':o==='Nugget'?'#ffd700':'#2ecc40';}
