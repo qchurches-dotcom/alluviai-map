@@ -1,5 +1,5 @@
 // AlluviAI service worker — offline cache for app shell + map tiles
-const SHELL='alluviai-shell-v2', TILES='alluviai-tiles-v1';
+const SHELL='alluviai-shell-v3', TILES='alluviai-tiles-v1';
 const SHELL_FILES=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css','https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(SHELL)
@@ -10,4 +10,5 @@ function isTile(u){return /arcgisonline|tile\.openstreetmap|basemaps|\/tile\//.t
 self.addEventListener('fetch',e=>{const u=e.request.url;
   if(isTile(u)){e.respondWith(caches.open(TILES).then(c=>c.match(e.request).then(hit=>hit||
     fetch(e.request).then(net=>{c.put(e.request,net.clone());return net;}).catch(()=>hit))));}
-  else{e.respondWith(caches.match(e.request).then(hit=>hit||fetch(e.request)));}});
+  else{e.respondWith(fetch(e.request).then(net=>{const cp=net.clone();
+    caches.open(SHELL).then(c=>c.put(e.request,cp));return net;}).catch(()=>caches.match(e.request)));}});
