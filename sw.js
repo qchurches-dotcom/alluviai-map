@@ -1,5 +1,5 @@
 // AlluviAI service worker — offline cache for app shell + map tiles
-const SHELL='alluviai-shell-v5', TILES='alluviai-tiles-v1';
+const SHELL='alluviai-shell-v6', TILES='alluviai-tiles-v1';
 const SHELL_FILES=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css','https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(SHELL)
