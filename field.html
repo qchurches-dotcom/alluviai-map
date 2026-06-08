@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlluviAI — Field scan</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,system-ui,sans-serif; background:#14110c; color:#eee; }
+  header { padding:12px 16px; background:#1d1810; border-bottom:1px solid #332; display:flex; align-items:center; gap:10px; }
+  header h1 { margin:0; font-size:16px; flex:1; }
+  a.back { color:#cb9; font-size:13px; text-decoration:none; }
+  main { padding:16px; max-width:760px; margin:0 auto; }
+  .card { background:#1d1810; border:1px solid #332; border-radius:10px; padding:14px; margin-bottom:14px; }
+  label { display:block; font-size:13px; margin:8px 0 4px; color:#cb9; }
+  input { width:100%; padding:9px; background:#0f0d09; color:#eee; border:1px solid #443; border-radius:7px; font-size:15px; }
+  button { width:100%; margin-top:14px; padding:13px; font-size:16px; font-weight:600; background:#c8541e; color:#fff; border:0; border-radius:8px; }
+  button:disabled { background:#555; }
+  summary { cursor:pointer; color:#cb9; font-size:13px; }
+  #status { font-size:13px; color:#cb9; margin-top:10px; min-height:18px; }
+  .tabs { display:flex; gap:6px; margin-bottom:8px; }
+  .tabs button { width:auto; flex:1; margin:0; padding:9px; font-size:13px; background:#2a2316; }
+  .tabs button.active { background:#c8541e; }
+  img.view { width:100%; border-radius:8px; background:#000; display:none; }
+  img.view.active { display:block; }
+  ol { padding-left:20px; } li { margin:6px 0; font-size:14px; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:4px; background:#3a2; color:#fff; }
+  .tag.pool { background:#36c; } .reason { color:#cb9; } .ll { color:#888; font-size:12px; }
+  .hint { font-size:12px; color:#988; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AlluviAI — Field scan</h1>
+  <a class="back" href="./">← Map</a>
+</header>
+<main>
+  <details class="card" id="setup">
+    <summary>⚙ Backend connection</summary>
+    <label>Processing server URL (your PC's Cloudflare tunnel)</label>
+    <input id="backend" type="url" placeholder="https://xxxx.trycloudflare.com">
+    <label>Access token</label>
+    <input id="token" type="text" placeholder="token from the PC">
+    <p class="hint">Saved on this device. The PC must be on, running the service + tunnel.</p>
+  </details>
+
+  <div class="card">
+    <label>Scaniverse scan (.glb preferred for a crisp picture, or .las)</label>
+    <input id="file" type="file" accept=".las,.glb">
+    <label>Downstream azimuth override (deg, optional)</label>
+    <input id="flowaz" type="number" step="1" placeholder="auto / long-axis">
+    <button id="go">Upload &amp; find targets</button>
+    <div id="status"></div>
+  </div>
+
+  <div id="results" class="card" style="display:none">
+    <div class="tabs">
+      <button data-v="overhead" class="active">Overhead</button>
+      <button data-v="oblique_upstream">Upstream</button>
+      <button data-v="oblique_downstream">Downstream</button>
+    </div>
+    <img id="overhead" class="view active">
+    <img id="oblique_upstream" class="view">
+    <img id="oblique_downstream" class="view">
+    <p id="summary" class="hint"></p>
+    <h3 style="font-size:15px;margin:10px 0 4px">Pan here (best first)</h3>
+    <ol id="targets"></ol>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const LS = { be:'alluviai_backend', tok:'alluviai_token' };
+$('backend').value = localStorage.getItem(LS.be) || '';
+$('token').value = localStorage.getItem(LS.tok) || '';
+if (!$('backend').value) $('setup').open = true;
+$('backend').onchange = () => localStorage.setItem(LS.be, $('backend').value.replace(/\/+$/,''));
+$('token').onchange = () => localStorage.setItem(LS.tok, $('token').value.trim());
+
+$('go').onclick = async () => {
+  const base = ($('backend').value || '').replace(/\/+$/,'');
+  const token = ($('token').value || '').trim();
+  const f = $('file').files[0];
+  if (!base) { $('setup').open = true; $('status').textContent = 'Set the server URL first.'; return; }
+  if (!f) { $('status').textContent = 'Pick a .glb or .las file.'; return; }
+  localStorage.setItem(LS.be, base); localStorage.setItem(LS.tok, token);
+
+  $('go').disabled = true; $('status').textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append(f.name.toLowerCase().endsWith('.glb') ? 'glb' : 'las', f);
+  if ($('flowaz').value) fd.append('flow_az', $('flowaz').value);
+  try {
+    const post = await fetch(base + '/scan', { method:'POST', body: fd,
+      headers: token ? { 'X-AlluviAI-Token': token } : {} });
+    if (post.status === 401) { $('status').textContent = 'Bad token.'; $('go').disabled=false; return; }
+    if (!post.ok) { $('status').textContent = 'Upload failed (' + post.status + ').'; $('go').disabled=false; return; }
+    const { job_id } = await post.json();
+    $('status').textContent = 'Processing… (a minute or so)';
+    let job;
+    for (let i=0; i<150; i++) {
+      job = await (await fetch(base + '/scan/' + job_id)).json();
+      if (job.status === 'done' || job.status === 'error') break;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    if (job.status !== 'done') { $('status').textContent = 'Error: ' + (job.error || job.status); $('go').disabled=false; return; }
+    $('status').textContent = '';
+    show(base, job_id, job);
+  } catch (e) { $('status').textContent = 'Cannot reach server — is the PC + tunnel up? ' + e; }
+  $('go').disabled = false;
+};
+
+function show(base, jid, job) {
+  $('results').style.display = 'block';
+  const fileBase = base + '/scan/' + jid + '/file/';
+  for (const v of ['overhead','oblique_upstream','oblique_downstream'])
+    $(v).src = fileBase + job.manifest[v];
+  const s = job.summary;
+  $('summary').textContent =
+    `flow ${s.flow_az}° (${s.flow_src}) · ${s.npts.toLocaleString()} pts · ${s.n_targets} targets`;
+  $('targets').innerHTML = s.top.map(t => {
+    const ll = (t.lat!=null) ? `<span class="ll">${t.lat.toFixed(6)}, ${t.lon.toFixed(6)}</span>` : '';
+    return `<li><span class="tag ${t.type}">${t.type}</span> rank ${t.rank}
+            — <span class="reason">${t.reason}</span><br>${ll}</li>`;
+  }).join('');
+}
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('img.view').forEach(x => x.classList.remove('active'));
+  b.classList.add('active'); $(b.dataset.v).classList.add('active');
+});
+</script>
+</body>
+</html>
