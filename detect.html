@@ -16,107 +16,195 @@
   .btn.on { background:var(--accent); border-color:var(--accent); }
   a.btn { text-decoration:none; }
   #info { position:absolute; z-index:1000; left:8px; right:8px; bottom:18px; background:var(--panel); border:1px solid #443;
-          border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.35; max-height:42vh; overflow:auto; }
+          border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.35; max-height:46vh; overflow:auto; }
   #info b { color:var(--muted); }
   .warn { color:#f3b562; font-weight:600; }
   .muted { color:#998; font-size:12px; }
+  .row { display:flex; gap:6px; align-items:center; margin-top:6px; }
+  .row .btn { padding:6px 8px; font-size:13px; flex:1; }
+  input[type=range] { flex:1; accent-color:var(--accent); }
   #near ol { margin:6px 0 0; padding-left:22px; } #near li { margin:3px 0; }
   #near a { color:#fff; }
   .rank { background:#000a; color:#fff; border:1px solid #fff; border-radius:9px; font-size:10px; padding:0 4px; white-space:nowrap; }
   .leaflet-popup-content { font-size:13px; }
-  .leaflet-container a.leaflet-popup-close-button { font-size:20px; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="bar">
   <a class="btn" href="./">&larr; Map</a>
-  <button class="btn on" id="b-combined">Detect</button>
-  <button class="btn" id="b-prior">Prior only</button>
   <button class="btn" id="b-sat">Satellite</button>
   <button class="btn" id="b-me">&#9678; Me</button>
   <button class="btn" id="b-info">i</button>
 </div>
 <div id="info">
   <div><span class="warn">UNTESTED model</span> <span class="muted">&middot; tap <b>i</b> for what this shows</span></div>
-  <div id="legend" style="display:none;margin-top:6px"><b>Detect</b> = shallow-gold prior &times; walk-from-car factor:
-    high where the prior is high <i>and</i> the ground is a longer walk from a drivable track (less likely to be hunted out).
-    <b>Prior only</b> = the shallow prior on its own. Neither factor has been tested against gold yet
-    (docs/FACTOR_EVIDENCE.md). Grey = built-up, flagged not removed. Blank = no LiDAR, or no mapped anticline axis yet
-    (the west: Kangaroo Flat, Sparrowhawk, Break o'Day). Land status is NOT checked: confirm access yourself.
+  <div id="legend" style="display:none;margin-top:6px">Score = <b>shallow-gold prior</b> &times; <b>walk-from-car factor</b><sup>k</sup>.
+    The prior is high near a mapped anticline axis (halves about every 70 m) and where that axis runs high
+    (reef top nearer the surface). It does not model wash downhill: that was tested twice and added nothing over
+    distance to the line. The walk factor is high where the ground is a longer walk from a drivable track
+    (less likely hunted out). <b>k</b> is the slider: 0 = prior only, 1 = equal weight, 2 = strongly favour remote ground.
+    <b>Shading</b> shows only the top share of ground: Sensitive 10&nbsp;%, Balanced 3&nbsp;%, Strict 1&nbsp;%.
+    Neither factor has been tested against gold yet. Grey = built-up (flagged, not removed). Blank = no LiDAR or no
+    mapped axis yet (the west: Kangaroo Flat, Sparrowhawk, Break o'Day). Land status is NOT checked: confirm access yourself.
     <div class="muted" style="margin-top:6px">Tap a spot for its numbers and a navigate link. Bendigo 1 m LiDAR, 5 m model grid.</div></div>
+  <div class="row">
+    <button class="btn" data-lvl="0">Sensitive</button>
+    <button class="btn" data-lvl="1">Balanced</button>
+    <button class="btn" data-lvl="2">Strict</button>
+  </div>
+  <div class="row"><span class="muted" style="min-width:86px">Car access <b id="kval">1</b></span>
+    <input type="range" id="k" min="0" max="2" step="0.25" value="1"></div>
+  <div class="muted">0 = ignore (prior only) &middot; 2 = favour far-from-car ground</div>
   <div id="near" style="margin-top:4px"></div>
   <div class="muted" style="margin-top:4px">Tracks &copy; OpenStreetMap contributors (ODbL), Vicmap Transport &copy; State of Victoria</div>
 </div>
 <script>
-const map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([-36.76, 144.28], 12);
+const map = L.map('map', { zoomControl:false }).setView([-36.76, 144.28], 12);
 L.control.zoom({ position:'bottomright' }).addTo(map);
 const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
 const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   { maxZoom:19, maxNativeZoom:18, attribution:'Imagery &copy; Esri' });
-const opts = { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.75 };
-const val = { combined: L.tileLayer('detect/t/combined/{z}/{x}/{y}.png', opts),
-              prior:    L.tileLayer('detect/t/prior/{z}/{x}/{y}.png', opts) };
-const built = L.tileLayer('detect/t/built/{z}/{x}/{y}.png', { ...opts, opacity:0.45 }).addTo(map);
-let mode = 'combined', D = null, spotLayer = L.layerGroup().addTo(map), me = null, meAcc = null, follow = false;
-val.combined.addTo(map);
+const built = L.tileLayer('detect/t/built/{z}/{x}/{y}.png',
+  { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.45 }).addTo(map);
 
-function setMode(m) {
-  mode = m;
-  for (const k of ['combined','prior']) {
-    document.getElementById('b-'+k).classList.toggle('on', k===m);
-    if (k===m) val[k].addTo(map); else map.removeLayer(val[k]);
-  }
-  drawSpots();
+let D = null, K = 1, LVL = 1, me = null, meAcc = null, follow = false, ranked = [];
+const store = {};   // tile key -> {canvas, raw ImageData | null}
+const LS = (() => { try { return window.localStorage; } catch (e) { return null; } })();
+try { const s = JSON.parse(LS && LS.getItem('detect-prefs') || '{}');
+      if (s.k != null) K = s.k; if (s.lvl != null) LVL = s.lvl; } catch (e) {}
+function savePrefs() { try { LS && LS.setItem('detect-prefs', JSON.stringify({ k:K, lvl:LVL })); } catch (e) {} }
+
+// inferno-ish ramp, 256 entries
+const STOPS = [[0,[40,11,84]],[0.25,[101,21,110]],[0.5,[188,55,84]],[0.75,[249,142,9]],[1,[252,255,164]]];
+const LUT = new Uint8ClampedArray(256 * 3);
+for (let i = 0; i < 256; i++) {
+  const t = i / 255; let j = 0; while (j < STOPS.length - 2 && t > STOPS[j + 1][0]) j++;
+  const [t0, c0] = STOPS[j], [t1, c1] = STOPS[j + 1], u = (t - t0) / (t1 - t0);
+  for (let c = 0; c < 3; c++) LUT[i * 3 + c] = c0[c] + (c1[c] - c0[c]) * u;
 }
-document.getElementById('b-combined').onclick = () => setMode('combined');
-document.getElementById('b-prior').onclick = () => setMode('prior');
+
+function thresholds() {
+  // interpolate the precomputed score quantiles between slider stops
+  const q = D.meta.quantiles, ks = Object.keys(q).map(Number).sort((a, b) => a - b);
+  let i = 0; while (i < ks.length - 2 && K > ks[i + 1]) i++;
+  const a = q[String(ks[i])], b = q[String(ks[i + 1])], u = Math.min(1, Math.max(0, (K - ks[i]) / (ks[i + 1] - ks[i])));
+  const lerp = n => a[n] + (b[n] - a[n]) * u;
+  return { lo: lerp(LVL), hi: Math.max(lerp(3), lerp(LVL) + 1e-6) };
+}
+
+function paint(t) {
+  const ctx = t.canvas.getContext('2d');
+  ctx.clearRect(0, 0, 256, 256);
+  if (!t.raw || !D) return;
+  const { lo, hi } = thresholds(), src = t.raw.data, out = ctx.createImageData(256, 256), o = out.data;
+  const span = hi - lo;
+  for (let p = 0; p < src.length; p += 4) {
+    const pc = src[p], wc = src[p + 1];
+    if (!pc) continue;
+    const pr = (pc - 1) / 254, w = (wc - 1) / 254;
+    const s = K ? pr * Math.pow(w, K) : pr;
+    if (s < lo) continue;
+    const li = Math.min(255, Math.round(255 * (s - lo) / span)) * 3;
+    o[p] = LUT[li]; o[p + 1] = LUT[li + 1]; o[p + 2] = LUT[li + 2]; o[p + 3] = 200;
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+const ValueLayer = L.GridLayer.extend({
+  createTile(coords, done) {
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const key = `${coords.z}/${coords.x}/${coords.y}`, t = { canvas:c, raw:null };
+    store[key] = t;
+    const img = new Image();
+    img.onload = () => {
+      const s = document.createElement('canvas'); s.width = s.height = 256;
+      const sx = s.getContext('2d', { willReadFrequently:true }); sx.drawImage(img, 0, 0);
+      t.raw = sx.getImageData(0, 0, 256, 256); paint(t); done(null, c);
+    };
+    img.onerror = () => done(null, c);   // no tile = no coverage here
+    img.src = `detect/t/v/${key}.png`;
+    return c;
+  }
+});
+const val = new ValueLayer({ minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15 }).addTo(map);
+val.on('tileunload', e => { for (const k in store) if (store[k].canvas === e.tile) delete store[k]; });
+function repaint() { for (const k in store) paint(store[k]); }
+
+function km(a, b) { return map.distance(a, b) / 1000; }
+function walkTxt(w) { return w == null ? 'no walking route' : `${w.toFixed(1)} min walk`; }
+function distTxt(d) { return d == null ? '' : `${Math.round(d)} m to track`; }
+function score(s) { return K ? s[2] * Math.pow(s[3], K) : s[2]; }
+
+function rerank() {
+  // score every candidate for this k, keep peaks at least 40 m apart, rank 1..n
+  const c = D.spots.map(s => [s, score(s)]).sort((a, b) => b[1] - a[1]);
+  const kept = [], cell = new Map(), g = 0.0005;   // ~45-55 m buckets
+  for (const [s, sc] of c) {
+    const gx = Math.floor(s[1] / g), gy = Math.floor(s[0] / g); let clash = false;
+    for (let dx = -1; dx <= 1 && !clash; dx++) for (let dy = -1; dy <= 1 && !clash; dy++)
+      for (const q of cell.get(`${gx + dx},${gy + dy}`) || [])
+        if (map.distance([s[0], s[1]], [q[0], q[1]]) < 40) { clash = true; break; }
+    if (clash) continue;
+    const k = `${gx},${gy}`; if (!cell.has(k)) cell.set(k, []); cell.get(k).push(s);
+    kept.push({ s, sc, rank: kept.length + 1 });
+  }
+  ranked = kept;
+}
+
+function popup(r) {
+  const [lat, lon, prior, f, walk, dist] = r.s;
+  const here = me ? `<br>${km(me.getLatLng(), [lat, lon]).toFixed(2)} km from you` : '';
+  return `<b>#${r.rank}</b> score ${r.sc.toFixed(3)} (k ${K})<br>
+    prior ${prior.toFixed(3)} &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
+    <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
+    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>`;
+}
+const spotLayer = L.layerGroup().addTo(map);
+function drawSpots() {
+  if (!D) return;
+  spotLayer.clearLayers();
+  const b = map.getBounds().pad(0.1), z = map.getZoom(), { lo } = thresholds();
+  const cap = z >= 15 ? 40 : z >= 13 ? 25 : 15;
+  const vis = ranked.filter(r => r.sc >= lo && b.contains([r.s[0], r.s[1]])).slice(0, cap);
+  vis.forEach((r, i) => {
+    const m = L.circleMarker([r.s[0], r.s[1]], { radius: i < 10 ? 8 : 5, color:'#000', weight:1,
+      fillColor: i < 10 ? '#00e5ff' : '#7fdfff', fillOpacity:0.9 }).bindPopup(() => popup(r));
+    if (i < 10) m.bindTooltip(String(r.rank), { permanent:true, direction:'center', className:'rank' });
+    spotLayer.addLayer(m);
+  });
+  const near = document.getElementById('near');
+  near.innerHTML = vis.length
+    ? `<b>Top in view</b>:<ol>` + vis.slice(0, 5).map((r, i) =>
+        `<li><a href="#" data-i="${i}">#${r.rank}: ${walkTxt(r.s[4])}, ${distTxt(r.s[5])}</a>` +
+        (me ? ` &middot; ${km(me.getLatLng(), [r.s[0], r.s[1]]).toFixed(2)} km` : '') + `</li>`).join('') + '</ol>'
+    : '<span class="muted">No shaded spots in view. Try Sensitive, or zoom out (blank = no coverage yet).</span>';
+  near.querySelectorAll('a[data-i]').forEach(a => a.onclick = (e) => {
+    e.preventDefault(); const r = vis[+a.dataset.i]; map.setView([r.s[0], r.s[1]], Math.max(map.getZoom(), 16));
+    L.popup().setLatLng([r.s[0], r.s[1]]).setContent(popup(r)).openOn(map);
+  });
+}
+map.on('moveend', drawSpots);
+
+function setLvl(l) {
+  LVL = l; document.querySelectorAll('[data-lvl]').forEach(b => b.classList.toggle('on', +b.dataset.lvl === l));
+  savePrefs(); repaint(); drawSpots();
+}
+document.querySelectorAll('[data-lvl]').forEach(b => b.onclick = () => setLvl(+b.dataset.lvl));
+const kIn = document.getElementById('k');
+kIn.value = K; document.getElementById('kval').textContent = K;
+kIn.oninput = () => { K = +kIn.value; document.getElementById('kval').textContent = K; repaint(); };
+kIn.onchange = () => { K = +kIn.value; savePrefs(); rerank(); repaint(); drawSpots(); };
+
 document.getElementById('b-sat').onclick = (e) => {
   const on = map.hasLayer(sat);
   if (on) { map.removeLayer(sat); osm.addTo(map); } else { map.removeLayer(osm); sat.addTo(map); }
   osm.bringToBack(); sat.bringToBack(); e.target.classList.toggle('on', !on);
 };
 document.getElementById('b-info').onclick = () => {
-  const i = document.getElementById('legend'); i.style.display = i.style.display==='none' ? '' : 'none';
+  const i = document.getElementById('legend'); i.style.display = i.style.display === 'none' ? '' : 'none';
 };
-
-function km(a, b) { return map.distance(a, b) / 1000; }
-function walkTxt(w) { return w == null ? 'no walking route' : `${w.toFixed(1)} min walk`; }
-function distTxt(d) { return d == null ? '' : `${Math.round(d)} m to track`; }
-function popup(s) {
-  const [lat, lon, rank, score, prior, walk, dist] = s;
-  const here = me ? `<br>${km(me.getLatLng(), [lat,lon]).toFixed(2)} km from you` : '';
-  return `<b>#${rank}</b> ${mode==='combined'?'detect':'prior'} score ${score.toFixed(3)}<br>
-    prior ${prior.toFixed(3)} &middot; ${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
-    <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
-    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>`;
-}
-function drawSpots() {
-  if (!D) return;
-  spotLayer.clearLayers();
-  const b = map.getBounds().pad(0.1), z = map.getZoom();
-  const cap = z >= 15 ? 200 : z >= 13 ? 80 : 40;
-  const vis = D.spots[mode].filter(s => b.contains([s[0], s[1]])).slice(0, cap);
-  vis.forEach((s, i) => {
-    const m = L.circleMarker([s[0], s[1]], { radius: i < 10 ? 8 : 5, color:'#000', weight:1,
-      fillColor: i < 10 ? '#00e5ff' : '#7fdfff', fillOpacity:0.9 }).bindPopup(popup(s));
-    if (i < 10) m.bindTooltip(String(s[2]), { permanent:true, direction:'center', className:'rank' });
-    spotLayer.addLayer(m);
-  });
-  const near = document.getElementById('near');
-  near.innerHTML = vis.length
-    ? `<b>Top in view</b> (${mode==='combined'?'detect':'prior only'}):<ol>` + vis.slice(0, 5).map((s, i) =>
-        `<li><a href="#" data-i="${i}">#${s[2]}: ${walkTxt(s[5])}, ${distTxt(s[6])}</a>` +
-        (me ? ` &middot; ${km(me.getLatLng(), [s[0], s[1]]).toFixed(2)} km` : '') + `</li>`).join('') + '</ol>'
-    : '<span class="muted">No ranked spots in view (blank = no coverage here yet).</span>';
-  near.querySelectorAll('a[data-i]').forEach(a => a.onclick = (e) => {
-    e.preventDefault(); const s = vis[+a.dataset.i]; map.setView([s[0], s[1]], Math.max(map.getZoom(), 16));
-    L.popup().setLatLng([s[0], s[1]]).setContent(popup(s)).openOn(map);
-  });
-}
-map.on('moveend', drawSpots);
-
 document.getElementById('b-me').onclick = (e) => {
   if (!navigator.geolocation) { alert('No GPS on this device'); return; }
   follow = true; e.target.classList.add('on');
@@ -132,7 +220,7 @@ if (navigator.geolocation) navigator.geolocation.watchPosition(p => {
 }, () => {}, { enableHighAccuracy:true, maximumAge:5000 });
 
 fetch('detect/data.json').then(r => r.json()).then(d => {
-  D = d; map.setView(d.meta.center, 12); drawSpots();
+  D = d; rerank(); map.setView(d.meta.center, 12); setLvl(LVL);
 });
 </script>
 </body>
