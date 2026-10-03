@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>AlluviAI Detect</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { color-scheme: dark; --bg:#14110c; --panel:#1d1810ee; --fg:#eee; --muted:#cb9; --accent:#c8541e; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:-apple-system,system-ui,sans-serif; }
+  #map { position:absolute; inset:0; }
+  .bar { position:absolute; z-index:1000; left:8px; right:8px; top:8px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; }
+  .bar > * { pointer-events:auto; }
+  .btn { background:var(--panel); color:var(--fg); border:1px solid #443; border-radius:8px; padding:9px 11px; font-size:14px; }
+  .btn.on { background:var(--accent); border-color:var(--accent); }
+  a.btn { text-decoration:none; }
+  #info { position:absolute; z-index:1000; left:8px; right:8px; bottom:18px; background:var(--panel); border:1px solid #443;
+          border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.35; max-height:42vh; overflow:auto; }
+  #info b { color:var(--muted); }
+  .warn { color:#f3b562; font-weight:600; }
+  .muted { color:#998; font-size:12px; }
+  #near ol { margin:6px 0 0; padding-left:22px; } #near li { margin:3px 0; }
+  #near a { color:#fff; }
+  .rank { background:#000a; color:#fff; border:1px solid #fff; border-radius:9px; font-size:10px; padding:0 4px; white-space:nowrap; }
+  .leaflet-popup-content { font-size:13px; }
+  .leaflet-container a.leaflet-popup-close-button { font-size:20px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="bar">
+  <a class="btn" href="./">&larr; Map</a>
+  <button class="btn on" id="b-combined">Detect</button>
+  <button class="btn" id="b-prior">Prior only</button>
+  <button class="btn" id="b-sat">Satellite</button>
+  <button class="btn" id="b-me">&#9678; Me</button>
+  <button class="btn" id="b-info">i</button>
+</div>
+<div id="info">
+  <div><span class="warn">UNTESTED model</span> <span class="muted">&middot; tap <b>i</b> for what this shows</span></div>
+  <div id="legend" style="display:none;margin-top:6px"><b>Detect</b> = shallow-gold prior &times; walk-from-car factor:
+    high where the prior is high <i>and</i> the ground is a longer walk from a drivable track (less likely to be hunted out).
+    <b>Prior only</b> = the shallow prior on its own. Neither factor has been tested against gold yet
+    (docs/FACTOR_EVIDENCE.md). Grey = built-up, flagged not removed. Blank = no LiDAR, or no mapped anticline axis yet
+    (the west: Kangaroo Flat, Sparrowhawk, Break o'Day). Land status is NOT checked: confirm access yourself.
+    <div class="muted" style="margin-top:6px">Tap a spot for its numbers and a navigate link. Bendigo 1 m LiDAR, 5 m model grid.</div></div>
+  <div id="near" style="margin-top:4px"></div>
+  <div class="muted" style="margin-top:4px">Tracks &copy; OpenStreetMap contributors (ODbL), Vicmap Transport &copy; State of Victoria</div>
+</div>
+<script>
+const map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([-36.76, 144.28], 12);
+L.control.zoom({ position:'bottomright' }).addTo(map);
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, maxNativeZoom:18, attribution:'Imagery &copy; Esri' });
+const opts = { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.75 };
+const val = { combined: L.tileLayer('detect/t/combined/{z}/{x}/{y}.png', opts),
+              prior:    L.tileLayer('detect/t/prior/{z}/{x}/{y}.png', opts) };
+const built = L.tileLayer('detect/t/built/{z}/{x}/{y}.png', { ...opts, opacity:0.45 }).addTo(map);
+let mode = 'combined', D = null, spotLayer = L.layerGroup().addTo(map), me = null, meAcc = null, follow = false;
+val.combined.addTo(map);
+
+function setMode(m) {
+  mode = m;
+  for (const k of ['combined','prior']) {
+    document.getElementById('b-'+k).classList.toggle('on', k===m);
+    if (k===m) val[k].addTo(map); else map.removeLayer(val[k]);
+  }
+  drawSpots();
+}
+document.getElementById('b-combined').onclick = () => setMode('combined');
+document.getElementById('b-prior').onclick = () => setMode('prior');
+document.getElementById('b-sat').onclick = (e) => {
+  const on = map.hasLayer(sat);
+  if (on) { map.removeLayer(sat); osm.addTo(map); } else { map.removeLayer(osm); sat.addTo(map); }
+  osm.bringToBack(); sat.bringToBack(); e.target.classList.toggle('on', !on);
+};
+document.getElementById('b-info').onclick = () => {
+  const i = document.getElementById('legend'); i.style.display = i.style.display==='none' ? '' : 'none';
+};
+
+function km(a, b) { return map.distance(a, b) / 1000; }
+function walkTxt(w) { return w == null ? 'no walking route' : `${w.toFixed(1)} min walk`; }
+function distTxt(d) { return d == null ? '' : `${Math.round(d)} m to track`; }
+function popup(s) {
+  const [lat, lon, rank, score, prior, walk, dist] = s;
+  const here = me ? `<br>${km(me.getLatLng(), [lat,lon]).toFixed(2)} km from you` : '';
+  return `<b>#${rank}</b> ${mode==='combined'?'detect':'prior'} score ${score.toFixed(3)}<br>
+    prior ${prior.toFixed(3)} &middot; ${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
+    <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
+    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>`;
+}
+function drawSpots() {
+  if (!D) return;
+  spotLayer.clearLayers();
+  const b = map.getBounds().pad(0.1), z = map.getZoom();
+  const cap = z >= 15 ? 200 : z >= 13 ? 80 : 40;
+  const vis = D.spots[mode].filter(s => b.contains([s[0], s[1]])).slice(0, cap);
+  vis.forEach((s, i) => {
+    const m = L.circleMarker([s[0], s[1]], { radius: i < 10 ? 8 : 5, color:'#000', weight:1,
+      fillColor: i < 10 ? '#00e5ff' : '#7fdfff', fillOpacity:0.9 }).bindPopup(popup(s));
+    if (i < 10) m.bindTooltip(String(s[2]), { permanent:true, direction:'center', className:'rank' });
+    spotLayer.addLayer(m);
+  });
+  const near = document.getElementById('near');
+  near.innerHTML = vis.length
+    ? `<b>Top in view</b> (${mode==='combined'?'detect':'prior only'}):<ol>` + vis.slice(0, 5).map((s, i) =>
+        `<li><a href="#" data-i="${i}">#${s[2]}: ${walkTxt(s[5])}, ${distTxt(s[6])}</a>` +
+        (me ? ` &middot; ${km(me.getLatLng(), [s[0], s[1]]).toFixed(2)} km` : '') + `</li>`).join('') + '</ol>'
+    : '<span class="muted">No ranked spots in view (blank = no coverage here yet).</span>';
+  near.querySelectorAll('a[data-i]').forEach(a => a.onclick = (e) => {
+    e.preventDefault(); const s = vis[+a.dataset.i]; map.setView([s[0], s[1]], Math.max(map.getZoom(), 16));
+    L.popup().setLatLng([s[0], s[1]]).setContent(popup(s)).openOn(map);
+  });
+}
+map.on('moveend', drawSpots);
+
+document.getElementById('b-me').onclick = (e) => {
+  if (!navigator.geolocation) { alert('No GPS on this device'); return; }
+  follow = true; e.target.classList.add('on');
+  if (me) map.setView(me.getLatLng(), Math.max(map.getZoom(), 16));
+};
+map.on('dragstart', () => { follow = false; document.getElementById('b-me').classList.remove('on'); });
+if (navigator.geolocation) navigator.geolocation.watchPosition(p => {
+  const ll = [p.coords.latitude, p.coords.longitude];
+  if (!me) { me = L.circleMarker(ll, { radius:7, color:'#fff', weight:2, fillColor:'#2a7fff', fillOpacity:1 }).addTo(map);
+             meAcc = L.circle(ll, { radius:p.coords.accuracy, color:'#2a7fff', weight:1, fillOpacity:0.1 }).addTo(map); }
+  me.setLatLng(ll); meAcc.setLatLng(ll).setRadius(p.coords.accuracy);
+  if (follow) map.setView(ll, Math.max(map.getZoom(), 16));
+}, () => {}, { enableHighAccuracy:true, maximumAge:5000 });
+
+fetch('detect/data.json').then(r => r.json()).then(d => {
+  D = d; map.setView(d.meta.center, 12); drawSpots();
+});
+</script>
+</body>
+</html>
