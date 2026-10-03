@@ -49,8 +49,10 @@
     (less likely hunted out). <b>k</b> is the slider: 0 = prior only, 1 = equal weight, 2 = strongly favour remote ground.
     <b>Shading</b> shows only the top share of ground: Sensitive 10&nbsp;%, Balanced 3&nbsp;%, Strict 1&nbsp;%.
     <b>Lines</b>: solid = mapped reef / anticline axes (Herman 1923, Bendigo only); dashed = reef lines
-    <i>inferred from old workings</i>: groups of GeoVic shafts held to the local rock strike and extended 250 m past
-    the last shaft each end (the extensions are ground the diggers may not have reached). Inferred lines are a guide,
+    <i>inferred from old workings</i>: groups of GeoVic shafts held to the local rock strike. Past the last shaft
+    the reef is assumed to carry on along strike with fading confidence (halves about every 200 m, out to 1 km), and
+    ground that rises above the level the diggers worked is down-weighted (reef top likely deeper there); ground at or
+    below that level, e.g. a gully crossing the line, keeps full weight. Inferred lines are a guide,
     not a map: in central Bendigo they sit near a mapped line about twice as often as chance. Away from Bendigo every
     line is inferred. Taradale / Drummond / Malmsbury use 5 m interpolated terrain (1 m LiDAR there is licensed only).
     Neither factor has been tested against gold yet. Grey = built-up (flagged, not removed). Blank = no LiDAR or no
@@ -68,7 +70,7 @@
   <div class="muted" style="margin-top:4px">Tracks &copy; OpenStreetMap contributors (ODbL), Vicmap Transport &copy; State of Victoria</div>
 </div>
 <script>
-const map = L.map('map', { zoomControl:false }).setView([-36.76, 144.28], 12);
+const map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([-36.76, 144.28], 12);
 L.control.zoom({ position:'bottomright' }).addTo(map);
 const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
