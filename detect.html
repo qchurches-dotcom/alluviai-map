@@ -69,7 +69,7 @@ const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Wo
 const built = L.tileLayer('detect/t/built/{z}/{x}/{y}.png',
   { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.45 }).addTo(map);
 
-let D = null, K = 1, LVL = 1, me = null, meAcc = null, follow = false, ranked = [];
+let D = null, K = 1, LVL = 2, me = null, meAcc = null, follow = false, ranked = [];
 const store = {};   // tile key -> {canvas, raw ImageData | null}
 const LS = (() => { try { return window.localStorage; } catch (e) { return null; } })();
 try { const s = JSON.parse(LS && LS.getItem('detect-prefs') || '{}');
