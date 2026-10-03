@@ -55,6 +55,7 @@
   <select class="btn" id="region"></select>
   <button class="btn" id="b-sat">Satellite</button>
   <button class="btn" id="b-lines">Lines</button>
+  <button class="btn" id="b-worked">Worked</button>
   <button class="btn" id="b-me">&#9678; Me</button>
   <button class="btn" id="b-info">i</button>
   <button class="btn" id="b-log">Log</button>
@@ -74,6 +75,9 @@
     below that level, e.g. a gully crossing the line, keeps full weight. Inferred lines are a guide,
     not a map: in central Bendigo they sit near a mapped line about twice as often as chance. Away from Bendigo every
     line is inferred. Taradale / Drummond / Malmsbury use 5 m interpolated terrain (1 m LiDAR there is licensed only).
+    <b>Worked</b> (purple) = ground where the LiDAR shows old diggings: dense small pits and mullock heaps. That detector
+    is tested as a workings detector (old shafts sit on it about 5 times more than chance) but says nothing about gold left
+    behind. It is a flag, not a filter, and covers the 1 m LiDAR areas only (Bendigo, Castlemaine / Fryerstown).
     Neither factor has been tested against gold yet. Grey = built-up (flagged, not removed). Blank = no LiDAR or no
     recorded workings. Break o'Day carries the Paris line and Break o'Day anticline from Caldwell's 1929 report; the Whipstick uses 5 m terrain and lines from GeoVic reef mine sites. Land status is NOT checked: confirm access yourself.
     <div class="muted" style="margin-top:6px">Tap a spot for its numbers and a navigate link. Bendigo 1 m LiDAR, 5 m model grid.</div></div>
@@ -121,6 +125,14 @@ const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Wo
   { maxZoom:19, maxNativeZoom:18, attribution:'Imagery &copy; Esri' });
 const built = L.tileLayer('detect/t/built/{z}/{x}/{y}.png',
   { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.45 }).addTo(map);
+// "already worked" ground (tested workings detector, 1 m regions only): a flag, never a filter
+const workedLayer = L.tileLayer('detect/t/worked/{z}/{x}/{y}.png',
+  { minZoom:8, maxZoom:19, minNativeZoom:10, maxNativeZoom:15, opacity:0.55 });
+document.getElementById('b-worked').onclick = (e) => {
+  const on = map.hasLayer(workedLayer);
+  on ? map.removeLayer(workedLayer) : workedLayer.addTo(map);
+  e.currentTarget.classList.toggle('on', !on);
+};
 
 let D = null, K = 1, LVL = 2, me = null, meAcc = null, follow = false, ranked = [];
 const store = {};   // tile key -> {canvas, raw ImageData | null}
@@ -190,6 +202,7 @@ function walkTxt(w) { return w == null ? 'no walking route' : `${w.toFixed(1)} m
 function distTxt(d) { return d == null ? '' : `${Math.round(d)} m to track`; }
 function score(s) { return K ? s[2] * Math.pow(s[3], K) : s[2]; }
 function srcTxt(s) { return s[6] ? 'line inferred from workings' : 'mapped reef line'; }
+function workedTxt(s) { return s[7] ? '<br><span class="warn">Already worked ground</span> (old diggings detected in the LiDAR)' : ''; }
 
 function rerank() {
   // score every candidate for this k, keep peaks at least 40 m apart, rank 1..n
@@ -211,7 +224,7 @@ function popup(r) {
   const [lat, lon, prior, f, walk, dist] = r.s;
   const here = me ? `<br>${km(me.getLatLng(), [lat, lon]).toFixed(2)} km from you` : '';
   return `<b>#${r.rank}</b> score ${r.sc.toFixed(3)} (k ${K})<br>
-    prior ${prior.toFixed(3)} (${srcTxt(r.s)}) &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
+    prior ${prior.toFixed(3)} (${srcTxt(r.s)}) &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}${workedTxt(r.s)}<br>
     <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
     <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>
     <div class="pop-acts" data-rank="${r.rank}">
