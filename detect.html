@@ -15,6 +15,7 @@
   .btn { background:var(--panel); color:var(--fg); border:1px solid #443; border-radius:8px; padding:9px 11px; font-size:14px; }
   .btn.on { background:var(--accent); border-color:var(--accent); }
   a.btn { text-decoration:none; }
+  #region { max-width:46vw; }
   #info { position:absolute; z-index:1000; left:8px; right:8px; bottom:18px; background:var(--panel); border:1px solid #443;
           border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.35; max-height:46vh; overflow:auto; }
   #info b { color:var(--muted); }
@@ -33,7 +34,9 @@
 <div id="map"></div>
 <div class="bar">
   <a class="btn" href="./">&larr; Map</a>
+  <select class="btn" id="region"></select>
   <button class="btn" id="b-sat">Satellite</button>
+  <button class="btn" id="b-lines">Lines</button>
   <button class="btn" id="b-me">&#9678; Me</button>
   <button class="btn" id="b-info">i</button>
 </div>
@@ -45,6 +48,11 @@
     distance to the line. The walk factor is high where the ground is a longer walk from a drivable track
     (less likely hunted out). <b>k</b> is the slider: 0 = prior only, 1 = equal weight, 2 = strongly favour remote ground.
     <b>Shading</b> shows only the top share of ground: Sensitive 10&nbsp;%, Balanced 3&nbsp;%, Strict 1&nbsp;%.
+    <b>Lines</b>: solid = mapped reef / anticline axes (Herman 1923, Bendigo only); dashed = reef lines
+    <i>inferred from old workings</i>: groups of GeoVic shafts held to the local rock strike and extended 250 m past
+    the last shaft each end (the extensions are ground the diggers may not have reached). Inferred lines are a guide,
+    not a map: in central Bendigo they sit near a mapped line about twice as often as chance. Away from Bendigo every
+    line is inferred. Taradale / Drummond / Malmsbury use 5 m interpolated terrain (1 m LiDAR there is licensed only).
     Neither factor has been tested against gold yet. Grey = built-up (flagged, not removed). Blank = no LiDAR or no
     mapped axis yet (the west: Kangaroo Flat, Sparrowhawk, Break o'Day). Land status is NOT checked: confirm access yourself.
     <div class="muted" style="margin-top:6px">Tap a spot for its numbers and a navigate link. Bendigo 1 m LiDAR, 5 m model grid.</div></div>
@@ -136,6 +144,7 @@ function km(a, b) { return map.distance(a, b) / 1000; }
 function walkTxt(w) { return w == null ? 'no walking route' : `${w.toFixed(1)} min walk`; }
 function distTxt(d) { return d == null ? '' : `${Math.round(d)} m to track`; }
 function score(s) { return K ? s[2] * Math.pow(s[3], K) : s[2]; }
+function srcTxt(s) { return s[6] ? 'line inferred from workings' : 'mapped reef line'; }
 
 function rerank() {
   // score every candidate for this k, keep peaks at least 40 m apart, rank 1..n
@@ -157,7 +166,7 @@ function popup(r) {
   const [lat, lon, prior, f, walk, dist] = r.s;
   const here = me ? `<br>${km(me.getLatLng(), [lat, lon]).toFixed(2)} km from you` : '';
   return `<b>#${r.rank}</b> score ${r.sc.toFixed(3)} (k ${K})<br>
-    prior ${prior.toFixed(3)} &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
+    prior ${prior.toFixed(3)} (${srcTxt(r.s)}) &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
     <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
     <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>`;
 }
@@ -202,6 +211,20 @@ document.getElementById('b-sat').onclick = (e) => {
   if (on) { map.removeLayer(sat); osm.addTo(map); } else { map.removeLayer(osm); sat.addTo(map); }
   osm.bringToBack(); sat.bringToBack(); e.target.classList.toggle('on', !on);
 };
+// reef lines overlay: solid mapped, dashed inferred
+const lineLayer = L.layerGroup();
+let linesLoaded = false;
+document.getElementById('b-lines').onclick = (e) => {
+  const on = map.hasLayer(lineLayer);
+  if (on) { map.removeLayer(lineLayer); e.target.classList.remove('on'); return; }
+  lineLayer.addTo(map); e.target.classList.add('on');
+  if (linesLoaded) return;
+  linesLoaded = true;
+  fetch('detect/lines.json').then(r => r.json()).then(ls => ls.forEach(l => lineLayer.addLayer(
+    L.polyline(l.c, l.k === 'mapped' ? { color:'#ffffff', weight:2, opacity:0.8 }
+                                     : { color:'#7fdfff', weight:2, opacity:0.8, dashArray:'6 6' })
+      .bindTooltip(l.k === 'mapped' ? 'mapped reef line' : `inferred from ${l.n} shafts`))));
+};
 document.getElementById('b-info').onclick = () => {
   const i = document.getElementById('legend'); i.style.display = i.style.display === 'none' ? '' : 'none';
 };
@@ -220,7 +243,12 @@ if (navigator.geolocation) navigator.geolocation.watchPosition(p => {
 }, () => {}, { enableHighAccuracy:true, maximumAge:5000 });
 
 fetch('detect/data.json').then(r => r.json()).then(d => {
-  D = d; rerank(); map.setView(d.meta.center, 12); setLvl(LVL);
+  D = d; rerank();
+  const sel = document.getElementById('region');
+  sel.innerHTML = '<option value="">Region&hellip;</option>' +
+    d.meta.regions.map((g, i) => `<option value="${i}">${g.name.split(' (')[0]}</option>`).join('');
+  sel.onchange = () => { if (sel.value !== '') map.fitBounds(d.meta.regions[+sel.value].bounds); };
+  map.setView(d.meta.center, 12); setLvl(LVL);
 });
 </script>
 </body>
