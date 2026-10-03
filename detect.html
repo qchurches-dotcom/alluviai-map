@@ -28,6 +28,24 @@
   #near a { color:#fff; }
   .rank { background:#000a; color:#fff; border:1px solid #fff; border-radius:9px; font-size:10px; padding:0 4px; white-space:nowrap; }
   .leaflet-popup-content { font-size:13px; }
+
+  #logp { position:absolute; z-index:1001; left:8px; right:8px; bottom:18px; background:var(--panel); border:1px solid #443;
+          border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.35; max-height:58vh; overflow:auto; display:none; }
+  #logp h3 { margin:0 0 6px; font-size:14px; }
+  #logp label { display:block; font-size:12px; color:var(--muted); margin-top:6px; }
+  #logp input, #logp select, #logp textarea { width:100%; box-sizing:border-box; background:#0f0d09; color:var(--fg);
+          border:1px solid #443; border-radius:6px; padding:7px; font-size:15px; }
+  #logp .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  #logp .types { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-top:6px; }
+  #logp .types .btn, #logp .acts .btn { padding:8px 4px; font-size:13px; }
+  #logp .acts { display:flex; gap:6px; margin-top:8px; }
+  #logp .acts .btn { flex:1; }
+  #logp ul { list-style:none; padding:0; margin:6px 0 0; }
+  #logp li { display:flex; gap:6px; align-items:center; padding:4px 0; border-top:1px solid #332; }
+  #logp li span { flex:1; min-width:0; }
+  .rec { color:#ff6b5a; font-weight:700; }
+  .pop-acts { display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
+  .pop-acts button { font-size:12px; padding:5px 7px; border-radius:6px; border:1px solid #886; background:#2a2316; color:#fff; }
 </style>
 </head>
 <body>
@@ -39,6 +57,7 @@
   <button class="btn" id="b-lines">Lines</button>
   <button class="btn" id="b-me">&#9678; Me</button>
   <button class="btn" id="b-info">i</button>
+  <button class="btn" id="b-log">Log</button>
 </div>
 <div id="info">
   <div><span class="warn">UNTESTED model</span> <span class="muted">&middot; tap <b>i</b> for what this shows</span></div>
@@ -56,7 +75,7 @@
     not a map: in central Bendigo they sit near a mapped line about twice as often as chance. Away from Bendigo every
     line is inferred. Taradale / Drummond / Malmsbury use 5 m interpolated terrain (1 m LiDAR there is licensed only).
     Neither factor has been tested against gold yet. Grey = built-up (flagged, not removed). Blank = no LiDAR or no
-    mapped axis yet (the west: Kangaroo Flat, Sparrowhawk, Break o'Day). Land status is NOT checked: confirm access yourself.
+    recorded workings. Break o'Day carries the Paris line and Break o'Day anticline from Caldwell's 1929 report; the Whipstick uses 5 m terrain and lines from GeoVic reef mine sites. Land status is NOT checked: confirm access yourself.
     <div class="muted" style="margin-top:6px">Tap a spot for its numbers and a navigate link. Bendigo 1 m LiDAR, 5 m model grid.</div></div>
   <div class="row">
     <button class="btn" data-lvl="0">Sensitive</button>
@@ -68,6 +87,30 @@
   <div class="muted">0 = ignore (prior only) &middot; 2 = favour far-from-car ground</div>
   <div id="near" style="margin-top:4px"></div>
   <div class="muted" style="margin-top:4px">Tracks &copy; OpenStreetMap contributors (ODbL), Vicmap Transport &copy; State of Victoria</div>
+</div>
+
+<div id="logp" aria-label="Field log">
+  <h3>Field log <span id="lg-rec" class="rec"></span></h3>
+  <div id="lg-sum" class="muted">No outing running.</div>
+  <div class="grid" style="margin-top:6px">
+    <div><label for="lg-det">Detector</label>
+      <select id="lg-det"><option>Minelab SDC 2300</option><option>VLF</option><option>Other PI</option><option>Other</option></select></div>
+    <div><label for="lg-swing">Swing width (m)</label><input id="lg-swing" type="number" step="0.1" min="0.2" value="1.0"></div>
+  </div>
+  <div class="acts"><button class="btn" id="lg-start">Start outing</button><button class="btn" id="lg-export">Export log</button></div>
+  <div class="types" id="lg-types">
+    <button class="btn" data-t="gold">Gold</button>
+    <button class="btn" data-t="trash">Dug: not gold</button>
+    <button class="btn" data-t="clay">Depth to clay</button>
+    <button class="btn" data-t="pressure">Signs of others</button>
+    <button class="btn" data-t="empty">Searched, nothing</button>
+    <button class="btn" data-t="note">Note</button>
+  </div>
+  <form id="lg-form" style="display:none" autocomplete="off"></form>
+  <div class="muted" id="lg-msg" style="margin-top:6px"></div>
+  <ul id="lg-list"></ul>
+  <div class="muted" style="margin-top:8px">Saved on this phone only until you export. Keep this page open with the
+    screen on while an outing runs: phones pause GPS for web pages when the screen is off.</div>
 </div>
 <script>
 const map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([-36.76, 144.28], 12);
@@ -170,7 +213,10 @@ function popup(r) {
   return `<b>#${r.rank}</b> score ${r.sc.toFixed(3)} (k ${K})<br>
     prior ${prior.toFixed(3)} (${srcTxt(r.s)}) &middot; walk factor ${f.toFixed(2)}<br>${walkTxt(walk)} &middot; ${distTxt(dist)}${here}<br>
     <span class="muted">${lat.toFixed(5)}, ${lon.toFixed(5)}</span><br>
-    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>`;
+    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking">Navigate</a>
+    <div class="pop-acts" data-rank="${r.rank}">
+      <button data-res="gold">Searched: gold</button><button data-res="nothing">Searched: nothing</button>
+      <button data-res="unreachable">Couldn't reach</button></div>`;
 }
 const spotLayer = L.layerGroup().addTo(map);
 function drawSpots() {
@@ -241,8 +287,206 @@ if (navigator.geolocation) navigator.geolocation.watchPosition(p => {
   if (!me) { me = L.circleMarker(ll, { radius:7, color:'#fff', weight:2, fillColor:'#2a7fff', fillOpacity:1 }).addTo(map);
              meAcc = L.circle(ll, { radius:p.coords.accuracy, color:'#2a7fff', weight:1, fillOpacity:0.1 }).addTo(map); }
   me.setLatLng(ll); meAcc.setLatLng(ll).setRadius(p.coords.accuracy);
+  if (window.logFix) window.logFix(p);
   if (follow) map.setView(ll, Math.max(map.getZoom(), 16));
 }, () => {}, { enableHighAccuracy:true, maximumAge:5000 });
+
+
+// ---------------- field log ----------------
+// One logger for three jobs: the pressure test (spot results + model values at
+// every entry), detector-reach calibration (target and clay depths) and the field
+// base rate (time, ground covered, finds). Data stays in this browser until exported.
+const LOGKEY = 'alluviai-log-v1';
+let LOG = { outings: [] };
+try { LOG = JSON.parse(localStorage.getItem(LOGKEY) || '') || LOG; } catch (e) {}
+let lastFix = null, wake = null, trackLine = null, entryLayer = L.layerGroup().addTo(map);
+const $ = id => document.getElementById(id);
+function saveLog() { try { localStorage.setItem(LOGKEY, JSON.stringify(LOG)); }
+  catch (e) { $('lg-msg').textContent = 'Could not save on this phone (storage full or blocked). Export now.'; } }
+function cur() { return LOG.outings.find(o => !o.end) || null; }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+function startOuting() {
+  const o = { id: uid(), start: new Date().toISOString(), end: null, detector: $('lg-det').value,
+              swing_m: +$('lg-swing').value || 1, track: [], entries: [], exported: false };
+  LOG.outings.push(o); saveLog();
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => { wake = w; }).catch(() => {}); } catch (e) {}
+  if (navigator.geolocation && !me) document.getElementById('b-me').click();
+  renderLog();
+}
+function endOuting() {
+  const o = cur(); if (!o) return;
+  o.end = new Date().toISOString(); saveLog();
+  try { wake && wake.release(); } catch (e) {} wake = null;
+  renderLog();
+}
+window.logFix = (p) => {
+  lastFix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy), t: Date.now() };
+  const o = cur(); if (!o || p.coords.accuracy > 30) return;
+  const tr = o.track, prev = tr[tr.length - 1];
+  const moved = prev ? map.distance([prev[0], prev[1]], [lastFix.lat, lastFix.lon]) : 99;
+  if (!prev || moved >= 3 || Date.now() - prev[2] > 15000) {
+    tr.push([+lastFix.lat.toFixed(6), +lastFix.lon.toFixed(6), lastFix.t, lastFix.acc]);
+    if (tr.length % 5 === 0) saveLog();
+    drawTrack();
+  }
+};
+function drawTrack() {
+  const o = cur(); const pts = o ? o.track.map(q => [q[0], q[1]]) : [];
+  if (!trackLine) trackLine = L.polyline(pts, { color: '#ff6b5a', weight: 3, opacity: 0.9 }).addTo(map);
+  else trackLine.setLatLngs(pts);
+}
+function trackKm(o) { let d = 0; for (let i = 1; i < o.track.length; i++)
+  d += map.distance([o.track[i-1][0], o.track[i-1][1]], [o.track[i][0], o.track[i][1]]); return d / 1000; }
+
+// model values at a point, read from the z15 value tile (R prior, G walk, B inferred flag)
+const tileCache = new Map();
+function sampleModel(lat, lon) {
+  return new Promise(res => {
+    const z = 15, n = 2 ** z, x = (lon + 180) / 360 * n;
+    const r = lat * Math.PI / 180, y = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n;
+    const tx = Math.floor(x), ty = Math.floor(y), px = Math.floor((x - tx) * 256), py = Math.floor((y - ty) * 256);
+    const key = `${tx}/${ty}`;
+    const read = (data) => { if (!data) return res(null);
+      const i = (py * 256 + px) * 4, pc = data[i], wc = data[i + 1];
+      res(pc ? { prior: +((pc - 1) / 254).toFixed(3), walk_factor: +((wc - 1) / 254).toFixed(3), inferred: data[i + 2] > 0 } : null); };
+    if (tileCache.has(key)) return read(tileCache.get(key));
+    const img = new Image();
+    img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 256;
+      const cx = c.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0);
+      const d = cx.getImageData(0, 0, 256, 256).data; tileCache.set(key, d); read(d); };
+    img.onerror = () => { tileCache.set(key, null); res(null); };
+    img.src = `detect/t/v/${z}/${key}.png`;
+  });
+}
+function nearestSpot(lat, lon, maxM = 60) {
+  let best = null, bd = maxM;
+  for (const r of ranked) { const d = map.distance([lat, lon], [r.s[0], r.s[1]]); if (d < bd) { bd = d; best = r; } }
+  return best ? { rank: best.rank, score: +best.sc.toFixed(4), prior: best.s[2], walk_factor: best.s[3],
+    walk_min: best.s[4], dist_track_m: best.s[5], inferred: !!best.s[6], k: K, dist_m: Math.round(bd) } : null;
+}
+function here() {
+  if (lastFix && Date.now() - lastFix.t < 30000) return { lat: lastFix.lat, lon: lastFix.lon, acc_m: lastFix.acc, loc: 'gps' };
+  const c = map.getCenter(); return { lat: c.lat, lon: c.lng, acc_m: null, loc: 'map centre' };
+}
+async function addEntry(type, fields, where) {
+  let o = cur();
+  if (!o) { startOuting(); o = cur(); }
+  const w = where || here();
+  const e = { id: uid(), type, time: new Date().toISOString(), lat: +w.lat.toFixed(6), lon: +w.lon.toFixed(6),
+              acc_m: w.acc_m, loc: w.loc, ...fields,
+              model: await sampleModel(w.lat, w.lon), spot: fields.spot || nearestSpot(w.lat, w.lon) };
+  o.entries.push(e); saveLog(); renderLog();
+  $('lg-msg').textContent = `Saved: ${label(e)}${w.loc === 'gps' ? '' : ' (at map centre: no recent GPS fix)'}`;
+}
+const TYPES = {
+  gold: { name: 'Gold', fields: [['weight_g', 'Weight (g)', 'number'], ['depth_cm', 'Depth (cm)', 'number'],
+          ['ground', 'Ground', ['bedrock/reef', 'eluvial slope', 'gully/alluvial', 'mullock/dump', 'other']], ['note', 'Note', 'text']] },
+  trash: { name: 'Dug: not gold', fields: [['what', 'What', ['iron', 'lead / shot', 'other non-ferrous', 'hot rock']],
+          ['depth_cm', 'Depth (cm)', 'number'], ['note', 'Note', 'text']] },
+  clay: { name: 'Depth to clay', fields: [['clay_cm', 'Depth to clay (cm)', 'number'], ['note', 'Note', 'text']] },
+  pressure: { name: 'Signs of others', fields: [['fresh_holes', 'Fresh holes', 'number'], ['old_holes', 'Old holes', 'number'],
+          ['trash_piles', 'Trash piles', 'number'], ['footpads', 'Foot / tyre tracks', ['none', 'some', 'many']],
+          ['veg', 'Vegetation (1 open - 4 thick)', ['1', '2', '3', '4']], ['walk_in_min', 'Walk-in from car (min)', 'number'],
+          ['note', 'Note', 'text']] },
+  empty: { name: 'Searched, nothing', fields: [['minutes', 'Minutes spent', 'number'], ['note', 'Note', 'text']] },
+  note: { name: 'Note', fields: [['note', 'Note', 'text']] },
+  spot: { name: 'Spot searched', fields: [] },
+};
+function label(e) {
+  const t = (TYPES[e.type] || { name: e.type }).name;
+  const bits = [e.weight_g && e.weight_g + ' g', e.depth_cm && e.depth_cm + ' cm', e.what, e.clay_cm && 'clay ' + e.clay_cm + ' cm',
+                e.result && e.result + ' at spot #' + (e.spot && e.spot.rank), e.note].filter(Boolean);
+  return t + (bits.length ? ': ' + bits.join(', ') : '');
+}
+function openForm(type) {
+  const f = $('lg-form'), T = TYPES[type];
+  f.innerHTML = `<b>${T.name}</b>` + T.fields.map(([k, lab, kind]) => {
+    const id = 'lgf-' + k;
+    if (Array.isArray(kind)) return `<label for="${id}">${lab}</label><select id="${id}" name="${k}">` +
+      kind.map(v => `<option>${v}</option>`).join('') + '</select>';
+    return `<label for="${id}">${lab}</label><input id="${id}" name="${k}" type="${kind}" ${kind === 'number' ? 'step="any" inputmode="decimal"' : ''}>`;
+  }).join('') + `<div class="acts"><button class="btn on" type="submit">Save here</button><button class="btn" type="button" id="lgf-cancel">Cancel</button></div>`;
+  f.style.display = '';
+  $('lgf-cancel').onclick = () => { f.style.display = 'none'; };
+  f.onsubmit = (ev) => { ev.preventDefault();
+    const out = {}; for (const el of f.elements) if (el.name && el.value !== '') out[el.name] = el.type === 'number' ? +el.value : el.value;
+    f.style.display = 'none'; addEntry(type, out); };
+}
+document.querySelectorAll('#lg-types [data-t]').forEach(b => b.onclick = () => openForm(b.dataset.t));
+$('lg-start').onclick = () => (cur() ? endOuting() : startOuting());
+
+function renderLog() {
+  const o = cur();
+  $('lg-start').textContent = o ? 'End outing' : 'Start outing';
+  $('lg-start').classList.toggle('on', !!o);
+  $('lg-rec').textContent = o ? '● recording' : '';
+  const all = LOG.outings, n = all.reduce((a, x) => a + x.entries.length, 0);
+  if (o) { const mins = Math.round((Date.now() - Date.parse(o.start)) / 60000), km = trackKm(o);
+    $('lg-sum').textContent = `Outing: ${mins} min, ${km.toFixed(2)} km walked, about ${Math.round(km * 1000 * o.swing_m)} m² swept, ` +
+      `${o.entries.length} entries. ${all.filter(x => !x.exported).length} outing(s) not yet exported.`; }
+  else $('lg-sum').textContent = all.length ? `${all.length} outing(s), ${n} entries on this phone; ` +
+      `${all.filter(x => !x.exported).length} not yet exported.` : 'No outing running. Logging an entry starts one.';
+  const list = $('lg-list'); list.textContent = '';
+  const items = all.flatMap(x => x.entries.map(e => [x, e])).slice(-8).reverse();
+  for (const [x, e] of items) {
+    const li = document.createElement('li'), sp = document.createElement('span'), del = document.createElement('button');
+    sp.textContent = new Date(e.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + label(e);
+    del.className = 'btn'; del.textContent = 'Delete'; del.style.padding = '4px 7px';
+    del.onclick = () => { if (del.dataset.c) { x.entries = x.entries.filter(q => q !== e); saveLog(); renderLog(); }
+                          else { del.dataset.c = 1; del.textContent = 'Confirm'; } };
+    li.append(sp, del); list.append(li);
+  }
+  entryLayer.clearLayers();
+  for (const x of all) for (const e of x.entries) L.circleMarker([e.lat, e.lon], { radius: 6, weight: 2, color: '#000',
+    fillColor: e.type === 'gold' ? '#ffd23f' : e.type === 'empty' ? '#9aa' : '#ff9f5a', fillOpacity: 1 })
+    .bindTooltip(label(e)).addTo(entryLayer);
+  drawTrack();
+}
+
+function exportLog() {
+  const feats = [];
+  for (const o of LOG.outings) {
+    if (o.track.length > 1) feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: o.track.map(q => [q[1], q[0]]) },
+      properties: { kind: 'track', outing: o.id, start: o.start, end: o.end, detector: o.detector, swing_m: o.swing_m,
+                    times: o.track.map(q => q[2]), acc_m: o.track.map(q => q[3]) } });
+    for (const e of o.entries) { const { lat, lon, ...props } = e;
+      feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] },
+        properties: { kind: 'entry', outing: o.id, detector: o.detector, ...props } }); }
+  }
+  if (!feats.length) { $('lg-msg').textContent = 'Nothing to export yet.'; return; }
+  const doc = { type: 'FeatureCollection', schema: 'alluviai-field-log-v1', exported_at: new Date().toISOString(),
+                page: 'detect.html', features: feats };
+  const name = 'alluviai-log-' + new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '') + '.geojson';
+  const blob = new Blob([JSON.stringify(doc)], { type: 'application/geo+json' });
+  const done = () => { for (const o of LOG.outings) o.exported = true; saveLog(); renderLog();
+    $('lg-msg').textContent = `Exported ${name}. Put it in your Google Drive folder for Claude.`; };
+  const file = new File([blob], name, { type: 'application/geo+json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: name }).then(done).catch(() => { $('lg-msg').textContent = 'Export cancelled.'; });
+  } else {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.append(a); a.click(); a.remove(); done();
+  }
+}
+$('lg-export').onclick = exportLog;
+
+$('b-log').onclick = (e) => {
+  const on = $('logp').style.display === 'none' || !$('logp').style.display;
+  $('logp').style.display = on ? 'block' : 'none'; $('info').style.display = on ? 'none' : '';
+  e.currentTarget.classList.toggle('on', on); if (on) renderLog();
+};
+// spot popups: record a search result against the spot
+map.on('popupopen', ev => {
+  const box = ev.popup.getElement().querySelector('.pop-acts'); if (!box) return;
+  const r = ranked.find(q => q.rank === +box.dataset.rank); if (!r) return;
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    addEntry('spot', { result: b.dataset.res, spot: nearestSpot(r.s[0], r.s[1], 1) },
+             { lat: r.s[0], lon: r.s[1], acc_m: null, loc: 'spot' });
+    map.closePopup();
+  });
+});
+renderLog();
 
 fetch('detect/data.json').then(r => r.json()).then(d => {
   D = d; rerank();
