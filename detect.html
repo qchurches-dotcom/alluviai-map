@@ -501,6 +501,23 @@ map.on('popupopen', ev => {
 });
 renderLog();
 
+// tap empty ground: drop a GPS pin to copy into Google Maps
+function copyGps(btn, s) {
+  const ok = () => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1500); };
+  const inp = btn.closest('.leaflet-popup-content').querySelector('input');
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(s).then(ok, () => inp.select());
+  else { inp.select(); try { document.execCommand('copy'); ok(); } catch (e) {} }
+}
+const gpsPin = L.popup({ maxWidth:240 });
+map.on('click', e => {
+  if (e.sourceTarget !== map) return;   // taps on spots, lines and log entries keep their own popups
+  const s = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`, d = s.replace(' ', '');
+  gpsPin.setLatLng(e.latlng).setContent(`<b>GPS spot</b><br>
+    <input readonly value="${s}" onfocus="this.select()" style="width:100%;box-sizing:border-box;font-size:14px;margin:4px 0">
+    <div class="pop-gps"><button onclick="copyGps(this, '${s}')">Copy</button> &middot;
+    <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${d}">Directions</a></div>`).openOn(map);
+});
+
 fetch('detect/data.json').then(r => r.json()).then(d => {
   D = d; rerank();
   const sel = document.getElementById('region');
